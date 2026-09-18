@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TDOT 2026 | QC Field Operations Demo · Map v3</title>
+<title>TDOT 2026 | QC Field Operations Demo · Map v5</title>
 <link rel="preconnect" href="https://unpkg.com">
 <!-- The previous v2 Leaflet CSS integrity hash was incorrect, so browsers rejected Leaflet CSS and tiles/markers/controls broke. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" onerror="this.onerror=null;this.removeAttribute('integrity');this.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'">
@@ -38,6 +38,26 @@ header{height:72px;background:var(--navy);color:white;display:flex;align-items:c
 .filters .homeAction:hover,.filters .homeAction:focus-visible{background:#255cb0;outline:2px solid #87b4ff;outline-offset:2px}
 .leaflet-control-layers{border-radius:7px!important}
 #map{background:#e5ebf0}
+
+/* v5: native-checkbox multiselect replacing the single-status select. */
+.filters .statusMulti{position:relative;flex:0 0 151px;min-width:151px;font-size:12px}
+.filters .statusMultiTrigger{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;padding:0 9px;background:white;border:1px solid #cfd7e3;border-radius:7px;cursor:pointer;list-style:none;user-select:none;color:#1f2937}
+.filters .statusMultiTrigger::-webkit-details-marker{display:none}
+.filters .statusMultiTrigger::marker{content:''}
+.filters .statusMulti[open] .statusMultiTrigger,.filters .statusMultiTrigger:focus-visible{border-color:var(--blue);outline:2px solid #bfd5ff;outline-offset:1px}
+.filters .statusCaret{color:#53647a;font-size:12px;transition:transform .15s}
+.filters .statusMulti[open] .statusCaret{transform:rotate(180deg)}
+.filters .statusMultiPanel{position:absolute;top:calc(100% + 5px);left:0;z-index:2500;min-width:218px;width:max-content;max-width:calc(100vw - 48px);background:#fff;border:1px solid #cfd7e3;border-radius:10px;box-shadow:0 9px 26px #0f1e3326;padding:7px;display:flex;flex-direction:column;gap:1px}
+.filters .statusOption{min-height:31px;display:flex;align-items:center;gap:9px;padding:5px 7px;white-space:nowrap;border-radius:6px;cursor:pointer;color:#27364c;font-size:12px;user-select:none}
+.filters .statusOption:hover,.filters .statusOption:focus-within{background:#f1f5fb}
+.filters .statusOption input{min-width:unset;width:15px;height:15px;padding:0;margin:0;flex:0 0 15px;accent-color:var(--blue);cursor:pointer}
+.filters .statusAllOption{font-weight:800;border-bottom:1px solid #e7ecf3;border-radius:0;margin-bottom:3px;padding-bottom:8px}
+.filters .statusOptionDot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+.filters .statusOptionList{display:flex;flex-direction:column;gap:1px}
+.filters .statusDone{align-self:stretch;margin:6px 2px 1px;padding:7px;border-radius:6px;border:0;background:#eaf0ff;color:#2056bd;font-size:11px;font-weight:800;cursor:pointer}
+.filters .statusDone:hover{background:#dce7ff}
+@media(max-width:650px){.filters .statusMulti{flex:1 1 135px}}
+
 </style>
 </head>
 <body>
@@ -68,12 +88,19 @@ header{height:72px;background:var(--navy);color:white;display:flex;align-items:c
           <input id="search" placeholder="Search site, TDOT ID, road, county…">
           <select id="group"><option value="">All project groups</option></select>
           <select id="dtype"><option value="">All data types</option></select>
-          <select id="status"><option value="">All statuses</option></select>
+          <details class="statusMulti" id="statusMulti">
+            <summary class="statusMultiTrigger" aria-label="Filter by one or more statuses"><span id="statusLabel">All statuses</span><span class="statusCaret" aria-hidden="true">▾</span></summary>
+            <div class="statusMultiPanel" id="statusMultiPanel">
+              <label class="statusOption statusAllOption"><input type="checkbox" id="statusAll" checked> <span>All statuses</span></label>
+              <div class="statusOptionList" id="statusOptions"></div>
+              <button type="button" class="statusDone" id="statusDone">Done</button>
+            </div>
+          </details>
           <select id="batch"><option value="">All batches/weeks</option></select>
           <button class="clear" id="clear">Clear</button>
           <button class="homeAction" id="homeAction" type="button" title="Clear filters and zoom to all TDOT sites">⌂ Home · all sites</button>
         </div>
-        <div class="mapMeta"><span id="showing"></span> · Click a marker or location row for details. Home restores all sites.</div>
+        <div class="mapMeta"><span id="showing"></span> · Select a project group to zoom to its sites. Home restores all sites.</div>
       </div>
       <div id="map"></div>
       <div class="legend" id="legend"></div>
@@ -111,6 +138,7 @@ const STATUS_META={
  active:{label:'Active / Other',color:'#7457c8',bg:'#f0ebff'},
  notstarted:{label:'Not Started',color:'#7c8aa0',bg:'#eef1f6'}
 };
+let selectedStatuses=new Set(Object.keys(STATUS_META)); // All statuses visible by default; empty means show none.
 let DATA=EMBEDDED_DATA, map, markers=L.layerGroup(), markerById=new Map();
 const MAP_DATA_BOUNDS = EMBEDDED_DATA
   .filter(d => Number.isFinite(d.lat) && Number.isFinite(d.lon) &&
@@ -124,9 +152,12 @@ function isTennesseeCoordinate(lat,lon){
 }
 function goHome(clearFilters=true){
   if(clearFilters){
-    for(const id of ['search','group','dtype','status','batch']){
+    for(const id of ['search','group','dtype','batch']){
       document.getElementById(id).value='';
     }
+    selectedStatuses=new Set(Object.keys(STATUS_META));
+    updateStatusPicker();
+    document.getElementById('statusMulti').open=false;
     refresh();
   }
   // Wait for Leaflet to measure the real map size after the filter toolbar wraps.
@@ -140,13 +171,87 @@ function goHome(clearFilters=true){
   });
 }
 
+function zoomToVisibleLocations(rows){
+  // Use the same valid KML-backed coordinates as the visible markers.
+  // Other active filters remain in effect when a project group changes.
+  const points=rows
+    .filter(d=>isTennesseeCoordinate(d.lat,d.lon))
+    .map(d=>[d.lat,d.lon]);
+  if(!points.length)return; // No mapped matches: retain the user's current view.
+
+  requestAnimationFrame(()=>{
+    // Ensure Leaflet has measured the map before calculating fitted bounds.
+    map.invalidateSize({pan:false});
+    if(points.length===1){
+      map.setView(points[0],12,{animate:false});
+    }else{
+      map.fitBounds(L.latLngBounds(points),{
+        padding:[35,35],
+        maxZoom:12,
+        animate:false
+      });
+    }
+  });
+}
+
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pct=(a,b)=>b?Math.round(a/b*100):0;
 function unique(key){return [...new Set(DATA.map(d=>d[key]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));}
 function addOptions(id,vals){const el=document.getElementById(id); vals.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;el.appendChild(o);});}
 function filtered(){
- const q=document.getElementById('search').value.trim().toLowerCase(), g=document.getElementById('group').value, dt=document.getElementById('dtype').value, st=document.getElementById('status').value, b=document.getElementById('batch').value;
- return DATA.filter(d=>(!g||d.group===g)&&(!dt||d.dataType===dt)&&(!st||d.highStatus===st)&&(!b||d.batch===b)&&(!q||[d.siteId,d.qcSiteCode,d.name,d.group,d.county,d.road,d.alias,d.notes,d.opsStatus,d.processingStatus,d.dotStatus].join(' ').toLowerCase().includes(q)));
+ const q=document.getElementById('search').value.trim().toLowerCase(), g=document.getElementById('group').value, dt=document.getElementById('dtype').value, b=document.getElementById('batch').value;
+ return DATA.filter(d=>(!g||d.group===g)&&(!dt||d.dataType===dt)&&selectedStatuses.has(d.highStatus)&&(!b||d.batch===b)&&(!q||[d.siteId,d.qcSiteCode,d.name,d.group,d.county,d.road,d.alias,d.notes,d.opsStatus,d.processingStatus,d.dotStatus].join(' ').toLowerCase().includes(q)));
+}
+function updateStatusPicker(){
+ const keys=Object.keys(STATUS_META),count=selectedStatuses.size;
+ const all=document.getElementById('statusAll');
+ all.checked=count===keys.length;
+ all.indeterminate=count>0&&count<keys.length;
+ document.querySelectorAll('#statusOptions input[data-status]').forEach(box=>{
+   box.checked=selectedStatuses.has(box.dataset.status);
+ });
+ const label=document.getElementById('statusLabel');
+ label.textContent=count===keys.length?'All statuses':
+   count===0?'No statuses':
+   count===1?STATUS_META[[...selectedStatuses][0]].label:`${count} statuses`;
+ document.getElementById('statusMulti').setAttribute('aria-label',label.textContent);
+}
+function initStatusPicker(){
+ const list=document.getElementById('statusOptions');
+ Object.entries(STATUS_META).forEach(([key,meta])=>{
+   const label=document.createElement('label');
+   label.className='statusOption';
+   const checkbox=document.createElement('input');
+   checkbox.type='checkbox';checkbox.dataset.status=key;checkbox.checked=true;
+   const dot=document.createElement('span');
+   dot.className='statusOptionDot';dot.style.backgroundColor=meta.color;
+   const text=document.createElement('span');text.textContent=meta.label;
+   label.append(checkbox,dot,text);list.appendChild(label);
+ });
+ document.getElementById('statusAll').addEventListener('change',event=>{
+   selectedStatuses=event.target.checked?new Set(Object.keys(STATUS_META)):new Set();
+   updateStatusPicker();refresh();
+ });
+ list.addEventListener('change',event=>{
+   const checkbox=event.target;
+   if(!checkbox.matches('input[data-status]'))return;
+   if(checkbox.checked)selectedStatuses.add(checkbox.dataset.status);
+   else selectedStatuses.delete(checkbox.dataset.status);
+   updateStatusPicker();refresh();
+ });
+ const menu=document.getElementById('statusMulti');
+ document.getElementById('statusDone').addEventListener('click',()=>{
+   menu.open=false;menu.querySelector('summary').focus();
+ });
+ document.addEventListener('click',event=>{
+   if(menu.open&&!menu.contains(event.target))menu.open=false;
+ });
+ menu.addEventListener('keydown',event=>{
+   if(event.key==='Escape'){
+     event.preventDefault();menu.open=false;menu.querySelector('summary').focus();
+   }
+ });
+ updateStatusPicker();
 }
 function badge(s){const m=STATUS_META[s]||STATUS_META.active;return `<span class="badge" style="background:${m.bg};color:${m.color}">${m.label}</span>`}
 function popup(d){return `<div class="popupTitle">${esc(d.name)}</div><div class="popupGrid">
@@ -398,9 +503,15 @@ async function load(){
   document.getElementById('asof').textContent='Snapshot';
   renderKpis();renderGroups();renderLegend();
   addOptions('group',unique('group'));addOptions('dtype',unique('dataType'));addOptions('batch',unique('batch'));
-  Object.entries(STATUS_META).forEach(([key,val])=>{const o=document.createElement('option');o.value=key;o.textContent=val.label;document.getElementById('status').appendChild(o);});
+  initStatusPicker();
   initMap();refresh();
-  ['search','group','dtype','status','batch'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',refresh));
+  ['search','dtype','batch'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',refresh));
+  // Changing the project-group dropdown filters the sites AND fits the map to them.
+  document.getElementById('group').addEventListener('change',()=>{
+    const rows=filtered();
+    refresh();
+    zoomToVisibleLocations(rows);
+  });
   document.getElementById('clear').onclick=()=>goHome(true);
   document.getElementById('homeAction').onclick=()=>goHome(true);
   document.getElementById('connectSheet').onclick=()=>syncSheet(document.getElementById('sheetUrl').value.trim());
