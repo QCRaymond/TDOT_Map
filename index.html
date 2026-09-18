@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TDOT 2026 | QC Field Operations Demo</title>
+<title>TDOT 2026 | QC Field Operations Demo · Map v3</title>
 <link rel="preconnect" href="https://unpkg.com">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynhddZBVO4gq7Z2at4pWGJkYI1Zk=" crossorigin="" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'">
+<!-- The previous v2 Leaflet CSS integrity hash was incorrect, so browsers rejected Leaflet CSS and tiles/markers/controls broke. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" onerror="this.onerror=null;this.removeAttribute('integrity');this.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>if(!window.L){document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></scr'+'ipt>');}</script>
 <style>
@@ -31,6 +32,12 @@ header{height:72px;background:var(--navy);color:white;display:flex;align-items:c
 .tdot-home-control button:hover,.tdot-home-control button:focus-visible{background:#edf3ff;outline:2px solid #2f6fed;outline-offset:1px}
 .tdot-home-control button .home-icon{font-size:15px;margin-right:4px}
 @media(max-width:650px){.mapCard{min-height:620px}#map{min-height:360px}}
+
+/* v3: visible Home action is outside the map's tile/control panes. */
+.filters .homeAction{background:#153b70;color:#fff;border:1px solid #153b70;padding:8px 12px;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
+.filters .homeAction:hover,.filters .homeAction:focus-visible{background:#255cb0;outline:2px solid #87b4ff;outline-offset:2px}
+.leaflet-control-layers{border-radius:7px!important}
+#map{background:#e5ebf0}
 </style>
 </head>
 <body>
@@ -64,6 +71,7 @@ header{height:72px;background:var(--navy);color:white;display:flex;align-items:c
           <select id="status"><option value="">All statuses</option></select>
           <select id="batch"><option value="">All batches/weeks</option></select>
           <button class="clear" id="clear">Clear</button>
+          <button class="homeAction" id="homeAction" type="button" title="Clear filters and zoom to all TDOT sites">⌂ Home · all sites</button>
         </div>
         <div class="mapMeta"><span id="showing"></span> · Click a marker or location row for details. Home restores all sites.</div>
       </div>
@@ -146,13 +154,20 @@ function popup(d){return `<div class="popupTitle">${esc(d.name)}</div><div class
 function initMap(){
   map=L.map('map',{zoomControl:true,scrollWheelZoom:true})
     .setView([35.75,-86.2],7);
-  // The grey basemap is visual only: markers still render if map tiles are slow.
+  // Street-level roads, colored highway shields and park areas; a close analogue
+  // to the supplied DataPoint screenshot, not a claim about DataPoint's exact provider.
+  const streets=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{
+    attribution:'Tiles &copy; Esri &mdash; Esri, HERE, USGS and contributors',maxZoom:19,maxNativeZoom:19
+  }).addTo(map);
+  // Keep the original clean grey basemap available as an alternate map layer.
   const gray=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',{
-    attribution:'Tiles © Esri — Esri, HERE, Garmin, FAO, NOAA, USGS',maxZoom:19
-  }).addTo(map);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{
-    maxZoom:19
-  }).addTo(map);
+    attribution:'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, FAO, NOAA, USGS',maxZoom:19,maxNativeZoom:16
+  });
+  const grayLabels=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{
+    maxZoom:19,maxNativeZoom:16
+  });
+  const lightGray=L.layerGroup([gray,grayLabels]);
+  L.control.layers({'Street map':streets,'Light gray':lightGray},null,{position:'topright',collapsed:true}).addTo(map);
   markers.addTo(map);
   map.zoomControl.setPosition('topright');
   fullMapBounds=MAP_DATA_BOUNDS.length?L.latLngBounds(MAP_DATA_BOUNDS):null;
@@ -387,6 +402,7 @@ async function load(){
   initMap();refresh();
   ['search','group','dtype','status','batch'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',refresh));
   document.getElementById('clear').onclick=()=>goHome(true);
+  document.getElementById('homeAction').onclick=()=>goHome(true);
   document.getElementById('connectSheet').onclick=()=>syncSheet(document.getElementById('sheetUrl').value.trim());
   document.getElementById('reloadSheet').onclick=()=>{
     const url=document.getElementById('sheetUrl').value.trim()||currentSheetUrl;
